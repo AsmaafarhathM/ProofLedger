@@ -1,0 +1,298 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// --------------------------------------------------------
+// Enums
+// --------------------------------------------------------
+
+enum GlobalRole {
+  SUPER_ADMIN
+  USER
+}
+
+enum OrgRole {
+  OWNER
+  ADMIN
+  MEMBER
+  GUEST
+}
+
+enum CaseRole {
+  LEAD_INVESTIGATOR
+  INVESTIGATOR
+  REVIEWER
+  VIEWER
+}
+
+enum CaseStatus {
+  DRAFT
+  ACTIVE
+  SUSPENDED
+  CLOSED
+  ARCHIVED
+}
+
+enum EvidenceStatus {
+  COLLECTED
+  ANALYZING
+  IN_CUSTODY
+  TRANSFERRED
+  SUBMITTED_TO_COURT
+  DISPOSED
+  ARCHIVED
+}
+
+enum CustodyEventType {
+  COLLECTION
+  TRANSFER
+  CHECK_IN
+  CHECK_OUT
+  ANALYSIS
+  COURT_PRESENTATION
+  DISPOSAL
+  REVIEW_REQUESTED
+  REVIEW_STARTED
+  REVIEW_DECISION
+  REVIEW_CANCELLED
+}
+
+enum ReviewStatus {
+  PENDING
+  IN_REVIEW
+  IN_PROGRESS
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+// --------------------------------------------------------
+// Core Models
+// --------------------------------------------------------
+
+/// User entity representing system actors (investigators, admins, auditors)
+model User {
+  id           String      @id @default(uuid())
+  email        String      @unique
+  passwordHash String
+  firstName    String
+  lastName     String
+  globalRole   GlobalRole  @default(USER)
+  isActive     Boolean     @default(true)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  // Relationships
+  orgMemberships  OrganizationMember[]
+  caseMemberships CaseMember[]
+  createdCases    Case[]               @relation("CreatedCases")
+  createdEvidence Evidence[]           @relation("CreatedEvidence")
+  custodyEvents   CustodyEvent[]       @relation("PerformedCustodyEvents")
+  reviews         Review[]             @relation("Reviewer")
+  auditLogs       AuditLog[]           @relation("UserAuditLogs")
+
+  @@map("users")
+}
+
+/// Multi-tenant Organization (Law enforcement agency, Forensics lab, Law firm)
+model Organization {
+  id          String   @id @default(uuid())
+  name        String
+  slug        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relationships
+  members   OrganizationMember[]
+  roles     Role[]
+  cases     Case[]
+  auditLogs AuditLog[]
+
+  @@map("organizations")
+}
+
+/// Junction table for User and Organization membership
+model OrganizationMember {
+  id             String       @id @default(uuid())
+  userId         String
+  organizationId String
+  role           OrgRole      @default(MEMBER)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+  @@index([userId])
+  @@map("organization_members")
+}
+
+/// Custom granular RBAC roles defined within an Organization
+model Role {
+  id             String       @id @default(uuid())
+  organizationId String
+  name           String
+  description    String?
+  permissions    String[]     // Array of permission tokens, e.g., ["EVIDENCE_READ", "EVIDENCE_EXPORT"]
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, name])
+  @@map("roles")
+}
+
+/// Investigation / Forensic Case entity
+model Case {
+  id             String     @id @default(uuid())
+  caseNumber     String     @unique
+  title          String
+  description    String?
+  status         CaseStatus @default(ACTIVE)
+  organizationId String
+  createdById    String
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  // Relationships
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy    User         @relation("CreatedCases", fields: [createdById], references: [id])
+  members      CaseMember[]
+  evidence     Evidence[]
+
+  @@index([organizationId])
+  @@index([status])
+  @@index([createdById])
+  @@index([createdAt])
+  @@map("cases")
+}
+
+/// Access control mapping between Users and Cases
+model CaseMember {
+  id        String   @id @default(uuid())
+  caseId    String
+  userId    String
+  role      CaseRole @default(INVESTIGATOR)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  case Case @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([caseId, userId])
+  @@index([caseId])
+  @@index([userId])
+  @@map("case_members")
+}
+
+/// Digital Evidence entity with SHA-256 integrity hashing
+model Evidence {
+  id             String         @id @default(uuid())
+  evidenceNumber String         @unique
+  title          String
+  description    String?
+  fileUrl        String?
+  fileHash       String         // SHA-256 hash for cryptographic proof & evidence tamper-checking
+  fileSizeBytes  BigInt?
+  mimeType       String?
+  status         EvidenceStatus @default(COLLECTED)
+  caseId         String
+  createdById    String
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  // Relationships
+  case          Case           @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  createdBy     User           @relation("CreatedEvidence", fields: [createdById], references: [id])
+  custodyEvents CustodyEvent[]
+  reviews       Review[]
+
+  @@index([caseId])
+  @@index([status])
+  @@index([createdById])
+  @@index([fileHash])
+  @@index([createdAt])
+  @@map("evidence")
+}
+
+/// Immutable Chain-of-Custody record tracking evidence handling and transfers
+model CustodyEvent {
+  id               String           @id @default(uuid())
+  evidenceId       String
+  performedById    String
+  eventType        CustodyEventType
+  location         String?
+  notes            String?
+  digitalSignature String?          // Optional cryptographic signature of the handler
+  createdAt        DateTime         @default(now())
+
+  // Relationships
+  evidence    Evidence @relation(fields: [evidenceId], references: [id], onDelete: Cascade)
+  performedBy User     @relation("PerformedCustodyEvents", fields: [performedById], references: [id])
+
+  @@index([evidenceId])
+  @@index([performedById])
+  @@index([eventType])
+  @@index([createdAt])
+  @@map("custody_events")
+}
+
+/// Peer forensic review / supervisor verification record
+model Review {
+  id          String       @id @default(uuid())
+  evidenceId  String
+  reviewerId  String
+  status      ReviewStatus @default(PENDING)
+  decision    String?
+  comments    String?
+  reviewedAt  DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  // Relationships
+  evidence Evidence @relation(fields: [evidenceId], references: [id], onDelete: Cascade)
+  reviewer User     @relation("Reviewer", fields: [reviewerId], references: [id])
+
+  @@index([evidenceId])
+  @@index([reviewerId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("reviews")
+}
+
+/// Tamper-evident Audit Log for system-wide compliance and security monitoring
+model AuditLog {
+  id             String   @id @default(uuid())
+  userId         String?
+  organizationId String?
+  action         String   // e.g., "EVIDENCE_CREATED", "CASE_CLOSED", "USER_LOGIN"
+  resource       String   // e.g., "Evidence", "Case", "User"
+  resourceId     String?
+  details        Json?    // Contextual metadata/diff payload
+  ipAddress      String?
+  userAgent      String?
+  createdAt      DateTime @default(now())
+
+  // Relationships
+  user         User?         @relation("UserAuditLogs", fields: [userId], references: [id], onDelete: SetNull)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([organizationId])
+  @@index([action])
+  @@index([resource])
+  @@index([createdAt])
+  @@map("audit_logs")
+}

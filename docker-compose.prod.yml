@@ -1,0 +1,89 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: proofledger_postgres_prod
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-proofledger_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-proofledger_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-proofledger_db}
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-proofledger_user} -d ${POSTGRES_DB:-proofledger_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:RELEASE.2024-03-03T17-50-39Z
+    container_name: proofledger_minio_prod
+    restart: always
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-proofledger_minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-proofledger_minio_pass}
+    command: server /data --console-address ":9091"
+    ports:
+      - "9090:9000"
+      - "9091:9091"
+    volumes:
+      - minio_prod_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    container_name: proofledger_api_prod
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-proofledger_user}:${POSTGRES_PASSWORD:-proofledger_pass}@postgres:5432/${POSTGRES_DB:-proofledger_db}?schema=public"
+      JWT_SECRET: ${JWT_SECRET:-proofledger_super_secret_jwt_key_2026}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-1d}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3001}
+      API_PORT: 3000
+      PORT: 3000
+      NODE_ENV: production
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-proofledger_minio}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-proofledger_minio_pass}
+      MINIO_BUCKET: ${MINIO_BUCKET:-proofledger-evidence}
+      ENABLE_SWAGGER: ${ENABLE_SWAGGER:-true}
+      SWAGGER_PATH: ${SWAGGER_PATH:-docs}
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health/liveness', (r) => { if (r.statusCode !== 200) process.exit(1); })"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    container_name: proofledger_web_prod
+    restart: always
+    depends_on:
+      - api
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3000}
+      PORT: 3001
+    ports:
+      - "3001:3001"
+
+volumes:
+  postgres_prod_data:
+  minio_prod_data:
