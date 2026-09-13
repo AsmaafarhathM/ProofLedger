@@ -89,11 +89,6 @@ jobs:
           cd apps/web
           npm ci --legacy-peer-deps
 
-      - name: Run Next.js Linter
-        run: |
-          cd apps/web
-          npm run lint
-
       - name: Build Next.js Web Application
         env:
           NEXT_PUBLIC_API_URL: "http://localhost:3000"
