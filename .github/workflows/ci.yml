@@ -70,6 +70,8 @@ jobs:
   frontend-ci:
     name: Frontend CI (Next.js & TypeScript)
     runs-on: ubuntu-latest
+    env:
+      NODE_OPTIONS: "--max-old-space-size=4096"
 
     steps:
       - name: Checkout Codebase
