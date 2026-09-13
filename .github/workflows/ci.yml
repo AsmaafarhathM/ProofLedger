@@ -85,7 +85,7 @@ jobs:
       - name: Install Frontend Dependencies
         run: |
           cd apps/web
-          npm ci
+          npm ci --legacy-peer-deps
 
       - name: Run Next.js Linter
         run: |
