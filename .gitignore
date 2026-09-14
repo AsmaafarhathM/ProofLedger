@@ -40,6 +40,7 @@ Thumbs.db
 /apps/api/prisma/migrations/dev.db
 /apps/api/prisma/migrations/*.db-journal
 
-# Coverage & Test outputs
-/coverage
-/.nyc_output
+# Local evidence storage binaries
+private-storage/
+**/private-storage/
+
