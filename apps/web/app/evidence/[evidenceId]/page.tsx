@@ -175,7 +175,54 @@ export default function EvidenceInspectionPage({
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = evidence?.title ? `${evidence.title}.raw` : `evidence_${evidenceId}.bin`;
+
+      // Determine proper file extension instead of forcing .raw
+      let filename = '';
+      if (evidence) {
+        let ext = '';
+        if (evidence.fileUrl) {
+          const urlPath = evidence.fileUrl.split('?')[0];
+          const match = urlPath.match(/\.([a-zA-Z0-9]+)$/);
+          if (match && match[1] && match[1].toLowerCase() !== 'raw') {
+            ext = match[1].toLowerCase();
+          }
+        }
+        if (!ext && evidence.title) {
+          const match = evidence.title.match(/\.([a-zA-Z0-9]+)$/);
+          if (match && match[1] && match[1].toLowerCase() !== 'raw') {
+            filename = evidence.title;
+          }
+        }
+        if (!ext && evidence.mimeType) {
+          const mimeMap: Record<string, string> = {
+            'application/pdf': 'pdf',
+            'image/png': 'png',
+            'image/jpeg': 'jpg',
+            'image/jpg': 'jpg',
+            'image/webp': 'webp',
+            'image/gif': 'gif',
+            'text/plain': 'txt',
+            'text/csv': 'csv',
+            'application/json': 'json',
+            'application/zip': 'zip',
+            'video/mp4': 'mp4',
+            'audio/mpeg': 'mp3',
+            'application/msword': 'doc',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+          };
+          ext = mimeMap[evidence.mimeType.toLowerCase()] || '';
+        }
+        if (!filename) {
+          const cleanTitle = (evidence.title || evidence.evidenceNumber || 'evidence')
+            .replace(/\.raw$/i, '')
+            .replace(/[^a-zA-Z0-9._-]/g, '_');
+          filename = ext ? `${cleanTitle}.${ext}` : `${cleanTitle}.pdf`;
+        }
+      } else {
+        filename = `evidence_${evidenceId}.bin`;
+      }
+
+      a.download = filename;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -594,7 +641,9 @@ export default function EvidenceInspectionPage({
                         </span>
                       </div>
 
-                      <p className="text-zinc-300 leading-normal">{ev.notes}</p>
+                      <p className="text-zinc-300 leading-relaxed text-[11px] font-mono bg-zinc-950/60 p-2.5 rounded-xl border border-zinc-800/60 break-all select-all">
+                        {ev.notes}
+                      </p>
                       <span className="text-[10px] text-zinc-500 mt-0.5">
                         {new Date(ev.createdAt).toLocaleDateString()}
                       </span>
